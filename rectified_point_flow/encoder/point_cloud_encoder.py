@@ -24,6 +24,7 @@ class PointCloudEncoder(pl.LightningModule):
         grid_size: float = 0.02,
         overlap_head_intermediate_dim: int = 16,
         compute_overlap_points: bool = False,
+        build_overlap_head: bool = True,
     ):
         super().__init__()
         self.pc_feat_dim = pc_feat_dim
@@ -33,9 +34,12 @@ class PointCloudEncoder(pl.LightningModule):
         self.grid_size = grid_size
         self.overlap_head_intermediate_dim = overlap_head_intermediate_dim
         self.compute_overlap_points = compute_overlap_points
-        self._build_model()
+        self.build_overlap_head = build_overlap_head
+        if build_overlap_head:
+            self._build_overlap_head()
+            self._init_weights()
 
-    def _build_model(self):
+    def _build_overlap_head(self):
         """Build the overlap-aware pretraining model components."""
         self.norm = nn.LayerNorm(self.pc_feat_dim)
         self.overlap_head = nn.Sequential(
@@ -139,7 +143,7 @@ class PointCloudEncoder(pl.LightningModule):
             "super_point": super_point_data,
         }
 
-        # Compute overlap points GT for pretraining stage
+        # Compute overlap points GT for pretraining stage (optional)
         if self.compute_overlap_points:
             with torch.no_grad():
                 output["overlap_mask"] = self._compute_overlap_points(batch, point_data)

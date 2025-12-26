@@ -44,6 +44,7 @@ class PointCloudDataset(Dataset):
         up_axis: str = "y",
         min_parts: int = 2,
         max_parts: int = 64,
+        anchor_free: bool = True,
         num_points_to_sample: int = 5000,
         min_points_per_part: int = 20,
         random_scale_range: tuple[float, float] | None = None,
@@ -59,6 +60,7 @@ class PointCloudDataset(Dataset):
         self.up_axis = up_axis.lower()
         self.min_parts = min_parts
         self.max_parts = max_parts
+        self.anchor_free = anchor_free
         self.num_points_to_sample = num_points_to_sample
         self.min_points_per_part = min_points_per_part
         self.random_scale_range = random_scale_range
@@ -99,8 +101,9 @@ class PointCloudDataset(Dataset):
             - rotations (P, 3, 3) float32: Rotation matrices.
             - translations (P, 3) float32: Translation vectors.
             - points_per_part (P) int64: Number of points per part.
-            - scale (P) float32: Scale of the point clouds.
-            - anchor_part (P) bool: Whether the part is an anchor part.
+            - scales (1, ) float32: Scale of the point clouds.
+            - anchor_parts (P) bool: Boolean array indicating anchor parts.
+            - anchor_indices (N, ) bool: Boolean array indicating anchor points.
             - init_rotation (3, 3) float32: Initial rotation matrix of the pointclouds_gt, used for recovering the original data.
 
         Note:
@@ -280,6 +283,12 @@ class PointCloudDataset(Dataset):
         pts_gt = np.concatenate(pcs_gt)
         normals_gt = np.concatenate(pns_gt)
 
+        # Use the largest part as the anchor part
+        anchor = np.zeros(self.max_parts, bool)
+        anchor_idx = np.argmax(counts)
+        anchor[anchor_idx] = True
+
+        # Global centering
         pts_gt, _ = center_pcd(pts_gt)
 
         # Rotate point clouds to y-up
@@ -291,7 +300,7 @@ class PointCloudDataset(Dataset):
             scale *= np.random.uniform(*self.random_scale_range)
         pts_gt /= scale
 
-        # Initial rotation to remove the pose prior (e.g., y-up) during training
+        # Initial global rotation to remove the pose prior (e.g., y-up) during training
         if self.split == "train":
             pts_gt, normals_gt, init_rot = rotate_pcd(pts_gt, normals_gt)
         else:
@@ -303,11 +312,31 @@ class PointCloudDataset(Dataset):
             """Process one part: center, rotate, and shuffle."""
             st, ed = offsets[i], offsets[i+1]
             
-            # Center the point cloud
-            part, trans = center_pcd(pts_gt[st:ed])
-            
-            # Random rotate the point cloud
-            part, norms, rot = rotate_pcd(part, normals_gt[st:ed])
+            # Center and rotate the part.
+            # In anchor-free mode (default):
+            #     - Center all parts including the anchor part. 
+            #     - Additionally randomly rotate the non-anchor parts. Anchor part keeps its orientation from the initial global rotation.
+            #
+            # In anchor-fixed mode (align with GARF):
+            #     - Only center and additionally randomly rotate the non-anchor parts. 
+            #     * Note: In anchor-fixed mode, the anchor part's pose in the CoM frame of the GT point cloud is given.
+
+            if self.anchor_free:
+                part, trans = center_pcd(pts_gt[st:ed])
+                if i != anchor_idx:
+                    part, norms, rot = rotate_pcd(part, normals_gt[st:ed])
+                else:
+                    rot = np.eye(3)
+                    norms = normals_gt[st:ed]
+            else:
+                if i != anchor_idx:
+                    part, trans = center_pcd(pts_gt[st:ed])
+                    part, norms, rot = rotate_pcd(part, normals_gt[st:ed])
+                else:
+                    part = pts_gt[st:ed]
+                    trans = np.zeros(3)
+                    rot = np.eye(3)
+                    norms = normals_gt[st:ed]
             
             # Random shuffle point order
             _order = np.random.permutation(len(part))
@@ -315,7 +344,6 @@ class PointCloudDataset(Dataset):
             normals[st: ed] = norms[_order]
             pts_gt[st:ed] = pts_gt[st:ed][_order]
             normals_gt[st:ed] = normals_gt[st:ed][_order]
-            
             return rot, trans
 
         results = list(self.pool.map(_proc_part, range(n_parts)))
@@ -325,30 +353,34 @@ class PointCloudDataset(Dataset):
         pts_per_part = pad_data(counts, self.max_parts)
         rots = pad_data(np.stack(rots), self.max_parts)
         trans = pad_data(np.stack(trans), self.max_parts)
-        scale = pad_data(np.array([scale] * n_parts), self.max_parts)
 
-        # Use the largest part as the anchor part
-        anchor = np.zeros(self.max_parts, bool)
-        primary = np.argmax(counts)
-        anchor[primary] = True
-        rots[primary] = np.eye(3)
-        trans[primary] = np.zeros(3)
+        # In anchor-fixed mode (align with GARF), the anchor's motion is fixed.
+        if not self.anchor_free:
+            assert np.allclose(rots[anchor_idx], np.eye(3)), f"rots[anchor_idx] is not the identity matrix: {rots[anchor_idx]}"
+            assert np.allclose(trans[anchor_idx], np.zeros(3)), f"trans[anchor_idx] is not the zero vector: {trans[anchor_idx]}"
 
-        # Select extra parts if multi_anchor is enabled
-        if self.multi_anchor and n_parts > 2 and np.random.rand() > 1 / n_parts:
-            candidates = counts[:n_parts] > self.num_points_to_sample * 0.05
-            candidates[primary] = False
-            if candidates.any():
-                extra_n = np.random.randint(
-                    1, min(candidates.sum() + 1, n_parts - 1)
-                )
-                extra_idx = np.random.choice(
-                    np.where(candidates)[0], extra_n, replace=False
-                )
-                anchor[extra_idx] = True
-                rots[extra_idx] = np.eye(3)
-                trans[extra_idx] = np.zeros(3)
+            # Select extra parts if multi_anchor is enabled
+            if self.multi_anchor and n_parts > 2 and np.random.rand() > 1 / n_parts:
+                candidates = counts[:n_parts] > self.num_points_to_sample * 0.05
+                candidates[anchor_idx] = False
+                if candidates.any():
+                    extra_n = np.random.randint(
+                        1, min(candidates.sum() + 1, n_parts - 1)
+                    )
+                    extra_idx = np.random.choice(
+                        np.where(candidates)[0], extra_n, replace=False
+                    )
+                    anchor[extra_idx] = True
+                    rots[extra_idx] = np.eye(3)
+                    trans[extra_idx] = np.zeros(3)
 
+        # Broadcast anchor flag to a per-point boolean mask
+        anchor_mask = np.zeros(self.num_points_to_sample, bool)
+        for i in range(n_parts):
+            if anchor[i]:
+                st, ed = offsets[i], offsets[i + 1]
+                anchor_mask[st:ed] = True
+        
         results = {}
         for key in ["index", "name", "overlap_threshold"]:
             results[key] = data[key]
@@ -362,8 +394,9 @@ class PointCloudDataset(Dataset):
         results["rotations"] = rots.astype(np.float32)
         results["translations"] = trans.astype(np.float32)
         results["points_per_part"] = pts_per_part.astype(np.int64)
-        results["scale"] = scale.astype(np.float32)
-        results["anchor_part"] = anchor.astype(bool)
+        results["scales"] = np.array(scale, dtype=np.float32)
+        results["anchor_parts"] = anchor.astype(bool)
+        results["anchor_indices"] = anchor_mask.astype(bool)
         results["init_rotation"] = init_rot.astype(np.float32)
         results["meshes"] = data["meshes"]
 

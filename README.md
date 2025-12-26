@@ -2,6 +2,8 @@
 
 [![ProjectPage](https://img.shields.io/badge/Project_Page-RPF-blue)](https://rectified-pointflow.github.io/) [![arXiv](https://img.shields.io/badge/arXiv-2506.05282-blue?logo=arxiv&color=%23B31B1B)](https://arxiv.org/abs/2506.05282) [![Hugging Face (LCM) Space](https://img.shields.io/badge/🤗%20Hugging%20Face%20-Space-yellow)](https://huggingface.co/gradient-spaces/Rectified-Point-Flow) [![License](https://img.shields.io/badge/License-Apache--2.0-929292)](https://www.apache.org/licenses/LICENSE-2.0)
 
+### NeurIPS 2025 (Spotlight)
+
 [Tao Sun](https://taosun.io/) *<sup>,1</sup>,
 [Liyuan Zhu](https://www.zhuliyuan.net/) *<sup>,1</sup>,
 [Shengyu Huang](https://shengyuh.github.io/)<sup>2</sup>,
@@ -15,8 +17,23 @@
 
 
 ## 🔔 News
-- [July 9, 2025] Released training codes.
-- [July 1, 2025] Released model checkpoints and inference codes. 
+- [*Dec 2, 2025*] Check out RPF's extension to large-scale pairwise & multi-view point cloud registration: [Register Any Point](https://arxiv.org/abs/2512.01850)!
+
+- [*Oct 26, 2025*] Our NeurIPS camera-ready [Paper](https://arxiv.org/abs/2506.05282v2) and [Slides](assets/RPF_Pre_NeurIPS.pdf) are available! 🎉 
+  - We include additional experiments on generalizability and a new **anchor-free** model, which aligns more with practical assembly assumptions.
+  - We release **Version 1.1** to support the anchor-free model; see the [PR](https://github.com/GradientSpaces/Rectified-Point-Flow/pull/25) for more details.
+
+- [*Sept 18, 2025*] Our paper has been accepted to **NeurIPS 2025 (Spotlight)**; see you in San Diego!
+
+- [*July 22, 2025*] **Version 1.0**: We strongly recommend updating to this version, which includes:
+  - Improved model speed (9-12% faster) and training stability.
+  - Fixed bugs in configs, RK2 sampler, and validation.
+  - Simplified point cloud packing and shaping.
+  - Checkpoints are compatible with the previous version.
+
+- [*July 9, 2025*] **Version 0.1**: Release training codes.
+
+- [*July 1, 2025*] Initial release of the model checkpoints and inference codes.
 
 ## Overview
 
@@ -68,10 +85,12 @@ This evironment includes `PyTorch 2.5.1`, `PyTorch3D 0.7.8`, and `flash-attn 2.7
 python sample.py data_root=./demo/data
 ```
 This saves images of the input (unposed) parts and multiple generations for possible assemblies.
-We use [Mitsuba](https://mitsuba.readthedocs.io/en/latest/) for high quality ray-traced rendering, as shown above. For a faster rendering, please switch to [PyTorch3D PointsRasterizer](https://pytorch3d.readthedocs.io/en/latest/modules/renderer/points/rasterizer.html#pytorch3d.renderer.points.rasterizer.PointsRasterizer) by adding `visualizer.renderer=pytorch3d`. To disable rendering, use `visualizer.renderer=none`.
-To save the flow trajectory as a GIF animation, use `visualizer.save_trajectory=true`.
 
-More rendering options are available in [config/visualizer](config/visualizer/flow.yaml).
+- **Trajectory**: To save the flow trajectory as a GIF animation, use `visualizer.save_trajectory=true`.
+
+- **Renderer**: We use [Mitsuba](https://mitsuba.readthedocs.io/en/latest/) for high quality ray-traced rendering, as shown above. For a faster rendering, please switch to [PyTorch3D PointsRasterizer](https://pytorch3d.readthedocs.io/en/latest/modules/renderer/points/rasterizer.html#pytorch3d.renderer.points.rasterizer.PointsRasterizer) by adding `visualizer.renderer=pytorch3d`. To disable rendering, use `visualizer.renderer=none`. More rendering options are available in [config/visualizer](config/visualizer/flow.yaml).
+
+- **Sampler**: We support Euler (default), RK2, and RK4 samplers for inference, set `model.inference_sampler={euler, rk2, rk4}` accordingly.
 
 **Overlap Prediction:** To visualize the overlap probabilities predicted by the encoder, please run:
 
@@ -127,27 +146,24 @@ python train.py --config-name "RPF_base_main" \
 - `model.encoder_ckpt`: Path to pretrained encoder checkpoint.
 - `data.batch_size`: Batch size per GPU. Defaults to 40 for 80GB GPU.
 
+> [!TIP]
+> The main training and inference logics are in [rectified_point_flow/modeling.py](rectified_point_flow/modeling.py).
+
 
 ## 📚 More Details
 
 ### Training Data
+The flow model is trained on the first six datasets listed below. The encoder is pretrained on these six datasets **plus** an additional preprocessed Objaverse v1 dataset (~38k objects) segmented by [PartField](https://github.com/nv-tlabs/PartField). Please note that dataset licenses vary.
 
-The model is trained on a combination of following datasets. Please be aware that datasets have different licenses. We will release the processed data files soon.
-
-<details>
-<summary>Click to expand the list of training datasets.</summary>
-
-| Dataset | Task | Part segmentation | #Parts | License | 
-|:---|:---|:---|:---|:---|
-| [IKEA-Manual](https://yunongliu1.github.io/ikea-video-manual/) | Shape assembly | Defined by IKEA manuals | [2, 19] | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
-| [PartNet](https://partnet.cs.stanford.edu/) | Shape assembly | Annotated by human | [2, 64] | [MIT License](https://mit-license.org/) |
-| [BreakingBad-Everyday](https://breaking-bad-dataset.github.io/) | Shape assembly | Simulated fractures via [fracture-modes](https://github.com/sgsellan/fracture-modes#dataset) | [2, 49] | [MIT License](https://mit-license.org/) |
-| [Two-by-Two](https://tea-lab.github.io/TwoByTwo/) | Shape assembly | Annotated by human | 2 | [MIT License](https://mit-license.org/) | 
-| [ModelNet-40](https://modelnet.cs.princeton.edu/#) | Pairwise registration | Following [Predator](https://github.com/prs-eth/OverlapPredator) split | 2 | [Custom](https://modelnet.cs.princeton.edu/#) |
-| [TUD-L](https://bop.felk.cvut.cz/datasets/) | Pairwise registration | Real scans with partial observations | 2 | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
-| [Objverse](https://objaverse.allenai.org/) | Overlap prediction | Segmented by [PartField](https://github.com/nv-tlabs/PartField) | [3, 12] | [ODC-BY 1.0](https://opendatacommons.org/licenses/by/1-0/) |
-</details>
-
+| Dataset | Task | Part segmentation | Num of Parts | License | Download |
+|:---|:---|:---|:---|:---|:---|
+| [IKEA-Manual](https://yunongliu1.github.io/ikea-video-manual/) | Shape assembly | Defined by IKEA manuals. | [2, 19] | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | [293 MB](https://storage.googleapis.com/flow-asm/ikea.hdf5) |
+| [PartNet](https://partnet.cs.stanford.edu/) | Shape assembly | Annotated by human. | [2, 64] | [MIT License](https://mit-license.org/) | [52 GB](https://storage.googleapis.com/flow-asm/partnet.hdf5) |
+| [BreakingBad-Everyday](https://breaking-bad-dataset.github.io/) | Shape assembly | Simulated fractures via [fracture-modes](https://github.com/sgsellan/fracture-modes#dataset). | [2, 49] | [MIT License](https://mit-license.org/) | [27 GB](https://storage.googleapis.com/flow-asm/breaking_bad_vol.hdf5) |
+| [Two-by-Two](https://tea-lab.github.io/TwoByTwo/) | Shape assembly | Annotated by human. | 2 | [MIT License](https://mit-license.org/) | [259 MB](https://storage.googleapis.com/flow-asm/2by2.hdf5) |
+| [ModelNet-40](https://modelnet.cs.princeton.edu/#) | Pairwise registration | Following [Predator](https://github.com/prs-eth/OverlapPredator)'s spliting. | 2 | [Custom](https://modelnet.cs.princeton.edu/#) | [2 GB](https://storage.googleapis.com/flow-asm/modelnet.hdf5) |
+| [TUD-L](https://bop.felk.cvut.cz/datasets/) | Pairwise registration | Real scans with partial observations. | 2 | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | [4 GB](https://storage.googleapis.com/flow-asm/tudl.hdf5) |
+| [Objaverse](https://objaverse.allenai.org/) | Overlap prediction | Segmented by [PartField](https://github.com/nv-tlabs/PartField). | [3, 12] | [ODC-BY 1.0](https://opendatacommons.org/licenses/by/1-0/) | [179 GB](https://storage.googleapis.com/rectified-point-flow-data/datasets/objaverse_38k.hdf5) |
 
 ### Custom Datasets
 
@@ -271,12 +287,18 @@ Define parameters for Lightning's [Trainer](https://lightning.ai/docs/pytorch/la
 - Use [point-cloud-utils](https://github.com/fwilliams/point-cloud-utils) for faster point sampling: Enable with `USE_PCU=1 python train.py ...`.
 - Use HDF5 format and store the files on faster storage (e.g., SSD or NVMe).
 
-**Loss overflow**: We do find numerical instabilities during training, especially loss overflowing to NaN. If you encounter this when training, you may try to use `bf16` precision by adding `trainer.precision=bf16`.
+**Loss overflow**: We do find numerical instabilities during training, especially loss overflowing to NaN. If you encounter this when training, you may try to reduce the learning rate and use `bf16` precision by adding `trainer.precision=bf16`.
+
+**Dataloader workers killed**: Usually this is a signal of insufficient CPU memory or stack. You may try to reduce the `num_workers`. 
+
+
+> [!NOTE]
+> Please don't hesitate to open an [issue](/issues) if you encounter any problems or bugs!
 
 ## ☑️ Todo List
 - [x] Release model & demo code
 - [x] Release full training code & checkpoints
-- [ ] Release processed dataset files
+- [x] Release processed dataset files
 - [ ] Support running without flash-attn
 - [ ] Online demo
 
@@ -288,7 +310,7 @@ If you find the code or data useful for your research, please cite our paper:
 @inproceedings{sun2025_rpf,
       author = {Sun, Tao and Zhu, Liyuan and Huang, Shengyu and Song, Shuran and Armeni, Iro},
       title = {Rectified Point Flow: Generic Point Cloud Pose Estimation},
-      booktitle = {arxiv preprint arXiv:2506.05282},
+      booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
       year = {2025},
     }
 ```
