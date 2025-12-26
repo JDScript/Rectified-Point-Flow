@@ -216,6 +216,7 @@ class PointCloudDataModule(L.LightningDataModule):
                 batch_size=self.batch_size,
                 num_workers=self.num_workers,
                 persistent_workers=False,
+                collate_fn=dataset.collate_fn,
             )
             for dataset in self.test_dataset
         ]

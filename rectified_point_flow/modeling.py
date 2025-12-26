@@ -1,6 +1,8 @@
 """Rectified Flow for Point Cloud Assembly."""
 
+import json
 import math
+from pathlib import Path
 from functools import partial
 from typing import Callable
 
@@ -8,6 +10,7 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import trimesh
 
 from .eval.evaluator import Evaluator
 from .procrustes import fit_transformations
@@ -140,6 +143,14 @@ class RectifiedPointFlow(L.LightningModule):
         v_t = x_1 - x_0                   # velocity field
         return x_t, v_t
 
+    @staticmethod
+    def _rt_to_matrix(rotation: torch.Tensor, translation: torch.Tensor) -> torch.Tensor:
+        """Convert rotation + translation to a 4x4 homogeneous transform."""
+        T = torch.eye(4, device=rotation.device, dtype=rotation.dtype)
+        T[:3, :3] = rotation
+        T[:3, 3] = translation
+        return T
+
     def forward(self, data_dict: dict):
         """Forward pass for training using rectified flow."""
         
@@ -254,6 +265,14 @@ class RectifiedPointFlow(L.LightningModule):
                 save_results=self.save_results, 
                 generation_idx=gen_idx,
             )
+            if self.save_results:
+                self._save_assemblies(
+                    data_dict=data_dict,
+                    rotations_pred=rotations_pred,
+                    translations_pred=translations_pred,
+                    eval_results=eval_results,
+                    generation_idx=gen_idx,
+                )
             n_trajectories.append(trajectory)
             n_rotations_pred.append(rotations_pred)
             n_translations_pred.append(translations_pred)
@@ -340,6 +359,60 @@ class RectifiedPointFlow(L.LightningModule):
         if return_tarjectory:
             return torch.stack(trajectory)                  # (num_steps, num_points, 3)
         return x_t                                          # (num_points, 3)
+
+    def _save_assemblies(
+        self,
+        data_dict: dict,
+        rotations_pred: torch.Tensor,
+        translations_pred: torch.Tensor,
+        eval_results: dict,
+        generation_idx: int,
+    ) -> None:
+        """Save assembled meshes and metrics for a test batch."""
+        if "meshes" not in data_dict or self.trainer is None:
+            return
+
+        save_root = Path(self.trainer.log_dir or self.trainer.default_root_dir or ".") / "assemblies"
+        save_root.mkdir(parents=True, exist_ok=True)
+
+        batch_size = len(data_dict["meshes"])
+        points_per_part = data_dict["points_per_part"]
+
+        for b in range(batch_size):
+            obj_dir = save_root / data_dict["name"][b]
+            obj_dir.mkdir(parents=True, exist_ok=True)
+
+            num_parts = int(data_dict["num_parts"][b])
+            scene_pred = trimesh.Scene()
+            scene_gt = trimesh.Scene()
+
+            scale = data_dict["scale"][b][0].item()
+
+            for p in range(num_parts):
+                if points_per_part[b, p].item() == 0:
+                    continue
+
+                part_mesh = data_dict["meshes"][b][p]
+                T_gt = self._rt_to_matrix(
+                    data_dict["rotations"][b, p],
+                    data_dict["translations"][b, p],
+                ) * scale
+                T_pred = self._rt_to_matrix(rotations_pred[b, p], translations_pred[b, p]) * scale
+                T_final = T_pred @ torch.linalg.inv(T_gt)
+
+                scene_pred.add_geometry(part_mesh.copy(), transform=T_final.detach().cpu().numpy())
+                scene_gt.add_geometry(part_mesh.copy())
+
+            scene_pred.export(obj_dir / f"view_assembly_0_gen{generation_idx:02d}.glb")
+            if generation_idx == 0:
+                scene_gt.export(obj_dir / "view_gt.glb")
+
+            stats = {
+                "part_acc": float(eval_results["part_accuracy"][b].detach().cpu().item()),
+                "rmse_t": float(eval_results["translation_error"][b].detach().cpu().item()),
+                "rmse_r": float(eval_results["rotation_error"][b].detach().cpu().item()),
+            }
+            (obj_dir / f"view_0_gen{generation_idx:02d}.json").write_text(json.dumps(stats, indent=2))
 
     def on_validation_epoch_end(self):
         metrics = self.meter.compute_average()

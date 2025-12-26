@@ -61,7 +61,7 @@ def setup(cfg: DictConfig):
     return model, datamodule, trainer
 
 
-@hydra.main(version_base="1.3", config_path="./config", config_name="RPF_base_demo")
+@hydra.main(version_base="1.3", config_path="./config", config_name="RPF_base_test_crag")
 def main(cfg: DictConfig):
     """Entry point for evaluating the model on validation set."""
 

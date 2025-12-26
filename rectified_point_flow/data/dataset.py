@@ -8,6 +8,7 @@ import numpy as np
 import trimesh
 from trimesh.exchange.ply import load_ply
 from torch.utils.data import Dataset
+from torch.utils.data.dataloader import default_collate
 
 from .transform import sample_points_poisson, center_pcd, rotate_pcd, pad_data
 
@@ -189,6 +190,7 @@ class PointCloudDataset(Dataset):
             "pointclouds_gt": pcs,
             "pointclouds_normals_gt": pns,
             "overlap_threshold": thr,
+            "meshes": meshes,
         }
 
     def _load_from_folder(self, frag: str, index: int) -> dict:
@@ -363,8 +365,20 @@ class PointCloudDataset(Dataset):
         results["scale"] = scale.astype(np.float32)
         results["anchor_part"] = anchor.astype(bool)
         results["init_rotation"] = init_rot.astype(np.float32)
+        results["meshes"] = data["meshes"]
 
         return results
+    
+    @staticmethod
+    def collate_fn(batch: list[dict]) -> dict:
+        collated = {}
+        for key in batch[0].keys():
+            if key == "meshes":
+                collated[key] = [item[key] for item in batch]
+            else:
+                collated[key] = default_collate([item[key] for item in batch])
+            
+        return collated
 
     def __del__(self):
         if self._h5_file is not None:
@@ -375,8 +389,8 @@ class PointCloudDataset(Dataset):
 if __name__ == "__main__":
     ds = PointCloudDataset(
         split="train",
-        data_path="/local_data/public/CRAG/objaverse.hdf5",
-        dataset_name="objaverse",
+        data_path="/local_data/public/CRAG/final_data/skull.hdf5",
+        dataset_name="skull",
     )
     sample = ds[0]
     for key, val in sample.items():
