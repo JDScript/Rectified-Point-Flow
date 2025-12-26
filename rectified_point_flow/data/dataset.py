@@ -289,7 +289,7 @@ class PointCloudDataset(Dataset):
         anchor[anchor_idx] = True
 
         # Global centering
-        pts_gt, _ = center_pcd(pts_gt)
+        pts_gt, global_offset = center_pcd(pts_gt)
 
         # Rotate point clouds to y-up
         pts_gt, normals_gt = self._make_y_up(pts_gt, normals_gt)
@@ -398,7 +398,8 @@ class PointCloudDataset(Dataset):
         results["anchor_parts"] = anchor.astype(bool)
         results["anchor_indices"] = anchor_mask.astype(bool)
         results["init_rotation"] = init_rot.astype(np.float32)
-        results["meshes"] = data["meshes"]
+        results["meshes"] = data["meshes"] if "meshes" in data else []
+        results["global_offset"] = global_offset.astype(np.float32)
 
         return results
     

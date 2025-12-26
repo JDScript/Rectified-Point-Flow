@@ -7,6 +7,7 @@ from functools import partial
 from typing import Callable
 
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -364,11 +365,15 @@ class RectifiedPointFlow(L.LightningModule):
         generation_idx: int,
     ) -> None:
         """Save assembled meshes and metrics for a test batch."""
-        if "meshes" not in data_dict or self.trainer is None:
+        if "meshes" not in data_dict or any(len(meshes) == 0 for meshes in data_dict["meshes"]) or self.trainer is None:
             return
-
+        
         save_root = Path(self.trainer.log_dir or self.trainer.default_root_dir or ".") / "assemblies"
         save_root.mkdir(parents=True, exist_ok=True)
+
+        # # For debugging: just revert back to initial transformations
+        # rotations_pred = data_dict["rotations"].clone()
+        # translations_pred = data_dict["translations"].clone()
 
         batch_size = len(data_dict["meshes"])
         points_per_part = data_dict["points_per_part"]
@@ -381,24 +386,43 @@ class RectifiedPointFlow(L.LightningModule):
             scene_pred = trimesh.Scene()
             scene_gt = trimesh.Scene()
 
-            scale = data_dict["scale"][b][0].item()
+            scale = data_dict["scales"][b].item()
+            global_offset = data_dict["global_offset"][b].detach().cpu().numpy()
 
             for p in range(num_parts):
                 if points_per_part[b, p].item() == 0:
                     continue
 
                 part_mesh = data_dict["meshes"][b][p]
-                T_gt = self._rt_to_matrix(
-                    data_dict["rotations"][b, p],
-                    data_dict["translations"][b, p],
-                ) * scale
-                T_pred = self._rt_to_matrix(rotations_pred[b, p], translations_pred[b, p]) * scale
-                T_final = T_pred @ torch.linalg.inv(T_gt)
+                # Bring mesh into the same normalized frame as the processed point clouds:
+                # 1) subtract global centroid; 2) apply initial global rotation; 3) uniform scale to [-1, 1].
+                mesh_norm = part_mesh.copy()
+                mesh_norm.apply_translation(-global_offset)
+                mesh_norm.apply_scale(1.0 / scale)
 
-                scene_pred.add_geometry(part_mesh.copy(), transform=T_final.detach().cpu().numpy())
-                scene_gt.add_geometry(part_mesh.copy())
+                # Map from normalized assembled frame -> per-part input frame.
+                rot_in = data_dict["rotations"][b, p].detach().cpu().numpy()      # inverse of the random part rotation
+                trans_in = data_dict["translations"][b, p].detach().cpu().numpy()  # part centroid in normalized frame
+                rot_pred = rotations_pred[b, p].detach().cpu().numpy()
+                trans_pred = translations_pred[b, p].detach().cpu().numpy()
 
-            scene_pred.export(obj_dir / f"view_assembly_0_gen{generation_idx:02d}.glb")
+                # pointclouds       = (pointclouds_gt - trans_in) @ rot_in
+                # pointclouds_pred  = pointclouds @ rot_pred.T + trans_pred
+                # => pointclouds_pred = pointclouds_gt @ (rot_in @ rot_pred.T) + (-trans_in @ rot_in @ rot_pred.T + trans_pred)
+                rot_comb = rot_in @ rot_pred.T
+                trans_comb = (-trans_in @ rot_in) @ rot_pred.T + trans_pred
+
+                T_comb = np.eye(4, dtype=np.float32)
+                T_comb[:3, :3] = rot_comb
+                T_comb[:3, 3] = trans_comb
+
+                mesh_pred = mesh_norm.copy()
+                mesh_pred.apply_transform(T_comb)
+
+                scene_pred.add_geometry(mesh_pred)
+                scene_gt.add_geometry(mesh_norm)
+
+            scene_pred.export(obj_dir / f"view_assembly_0{generation_idx:02d}.glb")
             if generation_idx == 0:
                 scene_gt.export(obj_dir / "view_gt.glb")
 
@@ -407,7 +431,7 @@ class RectifiedPointFlow(L.LightningModule):
                 "rmse_t": float(eval_results["translation_error"][b].detach().cpu().item()),
                 "rmse_r": float(eval_results["rotation_error"][b].detach().cpu().item()),
             }
-            (obj_dir / f"view_0_gen{generation_idx:02d}.json").write_text(json.dumps(stats, indent=2))
+            (obj_dir / f"view_assembly_0{generation_idx:02d}.json").write_text(json.dumps(stats, indent=2))
 
     def on_validation_epoch_end(self):
         metrics = self.meter.compute_average()

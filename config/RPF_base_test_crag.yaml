@@ -20,7 +20,7 @@ hydra:
     dir: .
   
 # Data
-data_root: /local_data/public/CRAG
+data_root: /local_data/zj2631/data
 data:
   dataset_names: ["morphosource_v1"]      # [] means using all datasets in the data_root
   batch_size: 1
@@ -30,7 +30,7 @@ data:
 log_dir: ./demo/
 
 # Checkpoint path
-ckpt_path: /local_data/zj2631/Projects/Rectified-Point-Flow/weights/RPF_base_full_ep2000.ckpt      # when null, the checkpoint will be downloaded from Hugging Face
+ckpt_path: null      # when null, the checkpoint will be downloaded from Hugging Face
 
 # Model settings
 model:

@@ -120,7 +120,7 @@ class PointCloudEncoder(pl.LightningModule):
                 }
             )
             point["normal"] = part_normals
-            features = self.norm(point["feat"])
+            features = point["feat"]
 
         return features, point, super_point, n_valid_partsarts
 
