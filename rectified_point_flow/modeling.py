@@ -368,7 +368,7 @@ class RectifiedPointFlow(L.LightningModule):
         if "meshes" not in data_dict or any(len(meshes) == 0 for meshes in data_dict["meshes"]) or self.trainer is None:
             return
         
-        save_root = Path(self.trainer.log_dir or self.trainer.default_root_dir or ".") / "assemblies"
+        save_root = Path(self.trainer.log_dir or self.trainer.default_root_dir or ".") / "visualizations"
         save_root.mkdir(parents=True, exist_ok=True)
 
         # # For debugging: just revert back to initial transformations

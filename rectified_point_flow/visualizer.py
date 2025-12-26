@@ -102,7 +102,7 @@ class VisualizationCallback(Callback):
                 points=points, colors=colors, **self._vis_kwargs
             )
             image_pil = img_tensor_to_pil(image)
-            sample_name = sample_name.replace("/", "_")
+            # sample_name = sample_name.replace("/", "_")
             image_pil.save(self.vis_dir / f"{sample_name}.png")
         except Exception as e:
             logger.error(f"Error saving visualization for sample {sample_name}: {e}")
@@ -221,8 +221,9 @@ class FlowVisualizationCallback(VisualizationCallback):
             ]
 
         for i in range(B):
-            dataset_name = batch["dataset_name"][i]
-            sample_name = f"{dataset_name}_sample{int(batch['index'][i]):05d}"
+            # dataset_name = batch["dataset_name"][i]
+            # sample_name = f"{dataset_name}_sample{int(batch['index'][i]):05d}"
+            sample_name = batch["name"][i]
 
             colors = part_ids_to_colors(
                 part_ids[i], colormap=self.colormap, part_order="random"
@@ -230,19 +231,19 @@ class FlowVisualizationCallback(VisualizationCallback):
             self._save_sample_images(
                 points=pts[i],
                 colors=colors,
-                sample_name=f"{sample_name}_input",
+                sample_name=f"{sample_name}/input",
             )
             self._save_sample_images(
                 points=pts_gt[i],
                 colors=colors,
-                sample_name=f"{sample_name}_gt",
+                sample_name=f"{sample_name}/gt",
             )
             for n in range(K):
                 pointclouds_pred = pointclouds_pred_list[n]
                 self._save_sample_images(
                     points=pointclouds_pred[i],
                     colors=colors,
-                    sample_name=f"{sample_name}_generation{n + 1:02d}",
+                    sample_name=f"{sample_name}/generation{n + 1:02d}",
                 )
 
                 if self.save_trajectory:
@@ -258,7 +259,7 @@ class FlowVisualizationCallback(VisualizationCallback):
                     self._save_trajectory_gif(
                         trajectory=trajectory[i],
                         colors=colors,
-                        sample_name=f"{sample_name}_generation{n + 1:02d}",
+                        sample_name=f"{sample_name}/generation{n + 1:02d}",
                     )
 
             if (
