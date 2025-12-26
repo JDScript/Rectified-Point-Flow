@@ -16,7 +16,7 @@ logger = logging.getLogger("Data")
 
 def _load_mesh_from_h5(group, part_name):
     """Load one mesh part from an HDF5 group."""
-    sub_grp = group[part_name]
+    sub_grp = group["pieces"][part_name]
     verts = np.array(sub_grp["vertices"][:])
     norms = np.array(sub_grp["normals"][:]) if "normals" in sub_grp else None
     faces = np.array(sub_grp["faces"][:]) if "faces" in sub_grp else np.array([])
@@ -179,7 +179,7 @@ class PointCloudDataset(Dataset):
 
     def _load_from_h5(self, name: str, index: int) -> dict:
         group = self._get_h5_file()[name]
-        parts = sorted(list(group.keys()))
+        parts = sorted(list(group["pieces"].keys()))
         meshes = list(self.pool.map(lambda p: _load_mesh_from_h5(group, p), parts))
         pcs, pns, thr = self._sample_points(meshes)
         return {
@@ -375,8 +375,8 @@ class PointCloudDataset(Dataset):
 if __name__ == "__main__":
     ds = PointCloudDataset(
         split="train",
-        data_path="../dataset/ikea.hdf5",
-        dataset_name="ikea",
+        data_path="/local_data/public/CRAG/objaverse.hdf5",
+        dataset_name="objaverse",
     )
     sample = ds[0]
     for key, val in sample.items():
