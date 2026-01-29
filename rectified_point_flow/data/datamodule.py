@@ -42,6 +42,7 @@ class PointCloudDataModule(L.LightningDataModule):
         batch_size: int = 40,
         num_workers: int = 16,
         multi_anchor: bool = False,
+        enable_missing_meta: bool = False,
     ):
         """Data module for point cloud data.
 
@@ -78,6 +79,7 @@ class PointCloudDataModule(L.LightningDataModule):
         self.min_dataset_size = min_dataset_size
         self.random_scale_range = random_scale_range
         self.multi_anchor = multi_anchor
+        self.enable_missing_meta = enable_missing_meta
 
         self.train_dataset: Optional[ConcatDataset] = None
         self.val_dataset: Optional[ConcatDataset] = None
@@ -143,6 +145,7 @@ class PointCloudDataModule(L.LightningDataModule):
                         min_parts=self.min_parts,
                         max_parts=self.max_parts,
                         anchor_free=self.anchor_free,
+                        enable_missing_meta=self.enable_missing_meta,
                         num_points_to_sample=self.num_points_to_sample,
                         min_points_per_part=self.min_points_per_part,
                         limit_val_samples=self.limit_val_samples,
@@ -169,6 +172,7 @@ class PointCloudDataModule(L.LightningDataModule):
                         num_points_to_sample=self.num_points_to_sample,
                         min_points_per_part=self.min_points_per_part,
                         limit_val_samples=self.limit_val_samples,
+                        enable_missing_meta=self.enable_missing_meta,
                     )
                     for dataset_name in self.dataset_names
                 ]
@@ -190,12 +194,14 @@ class PointCloudDataModule(L.LightningDataModule):
                     num_points_to_sample=self.num_points_to_sample,
                     min_points_per_part=self.min_points_per_part,
                     limit_val_samples=self.limit_val_samples,
+                    enable_missing_meta=self.enable_missing_meta,
                 )
                 for dataset_name in self.dataset_names
             ]
             logger.info(make_line())
             logger.info("Total Test Samples: " + str(sum(len(dataset) for dataset in self.test_dataset)))
             logger.info("Anchor-free Mode: " + str(self.anchor_free))
+            logger.info("Enable Missing Meta: " + str(self.enable_missing_meta))
 
     def train_dataloader(self):
         """Get training dataloader."""

@@ -60,17 +60,38 @@ def print_eval_table(
     # Group dicts by dataloader_idx
     per_idx: Dict[int, Dict[str, Any]] = {}
     idx_pattern = re.compile(r"dataloader_idx_(\d+)")
-    for d in results:
-        sample_key = next(iter(d))
-        idx = int(idx_pattern.search(sample_key).group(1))
-        per_idx[idx] = d
-    metric_pattern = re.compile(r"^(.+?/.+?)/dataloader_idx_\d+$")
-    metrics = set()
-    for d in results:
-        for k in d:
-            m = metric_pattern.match(k)
-            if m:
-                metrics.add(m.group(1))
+    
+    # Check if keys contain dataloader_idx pattern
+    has_dataloader_idx = False
+    if results:
+        sample_key = next(iter(results[0]))
+        has_dataloader_idx = idx_pattern.search(sample_key) is not None
+    
+    if has_dataloader_idx:
+        # Keys have dataloader_idx suffix
+        for d in results:
+            sample_key = next(iter(d))
+            match = idx_pattern.search(sample_key)
+            if match:
+                idx = int(match.group(1))
+                per_idx[idx] = d
+        metric_pattern = re.compile(r"^(.+?/.+?)/dataloader_idx_\d+$")
+        metrics = set()
+        for d in results:
+            for k in d:
+                m = metric_pattern.match(k)
+                if m:
+                    metrics.add(m.group(1))
+    else:
+        # Keys don't have dataloader_idx suffix (single dataloader case)
+        # Treat each result dict as a separate dataloader
+        for idx, d in enumerate(results):
+            per_idx[idx] = d
+        # Extract metric names directly
+        metrics = set()
+        for d in results:
+            for k in d:
+                metrics.add(k)
 
     # Split into two sections for Avg and BoN metrics
     avg_metrics = sorted(m for m in metrics if m.lower().startswith("avg/"))
@@ -78,14 +99,17 @@ def print_eval_table(
     table = Table()
     table.add_column("Metrics", style="bold magenta", justify="left", no_wrap=True)
     for idx in sorted(per_idx):
-        col_name = dataset_names[idx]
+        col_name = dataset_names[idx] if idx < len(dataset_names) else f"Dataset {idx}"
         table.add_column(col_name, style="cyan")
 
     fmt = f"{{:.{digits}f}}"
     for metric in avg_metrics:
         row = [metric]
         for idx in sorted(per_idx):
-            key = f"{metric}/dataloader_idx_{idx}"
+            if has_dataloader_idx:
+                key = f"{metric}/dataloader_idx_{idx}"
+            else:
+                key = metric
             val = per_idx[idx].get(key)
             if val is None:
                 row.append("-")
@@ -100,7 +124,10 @@ def print_eval_table(
     for metric in bon_metrics:
         row = [metric]
         for idx in sorted(per_idx):
-            key = f"{metric}/dataloader_idx_{idx}"
+            if has_dataloader_idx:
+                key = f"{metric}/dataloader_idx_{idx}"
+            else:
+                key = metric
             val = per_idx[idx].get(key)
             if val is None:
                 row.append("-")

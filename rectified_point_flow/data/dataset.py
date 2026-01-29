@@ -1,3 +1,4 @@
+import json
 import os
 import glob
 import logging
@@ -52,6 +53,7 @@ class PointCloudDataset(Dataset):
         limit_val_samples: int = 0,
         min_dataset_size: int = 0,
         num_threads: int = 2,
+        enable_missing_meta: bool = False,
     ):
         super().__init__()
         self.split = split
@@ -67,6 +69,7 @@ class PointCloudDataset(Dataset):
         self.multi_anchor = multi_anchor
         self.limit_val_samples = limit_val_samples
         self.min_dataset_size = min_dataset_size
+        self.enable_missing_meta = enable_missing_meta
 
         self.use_folder = os.path.isdir(self.data_path)
         self.pool = ThreadPoolExecutor(max_workers=num_threads)
@@ -79,6 +82,10 @@ class PointCloudDataset(Dataset):
             f"| {self.dataset_name:16s} | {self.split:8s} | {len(self.fragments):8d} "
             f"| [{int(self.min_part_count):2d}, {int(self.max_part_count):2d}] |"
         )
+
+        self.missing_meta = {}
+        if self.enable_missing_meta:
+            self.missing_meta = json.load(open(data_path.replace(".hdf5", "_missing_meta.json"), "r"))
 
     def __len__(self):
         return len(self.fragments)
@@ -157,7 +164,7 @@ class PointCloudDataset(Dataset):
             fragments = []
             for name in frags:
                 try:
-                    count = len(h5[name].keys())
+                    count = len(h5[name]['pieces'].keys())
                     if self.min_parts <= count <= self.max_parts:
                         self.min_part_count = min(self.min_part_count, count)
                         self.max_part_count = max(self.max_part_count, count)
@@ -184,6 +191,9 @@ class PointCloudDataset(Dataset):
     def _load_from_h5(self, name: str, index: int) -> dict:
         group = self._get_h5_file()[name]
         parts = sorted(list(group["pieces"].keys()))
+         # Handle missing metadata
+        missing_parts = self.missing_meta.get(name, {}).get("missing_parts", [])
+        parts = [p for p in parts if p not in missing_parts]
         meshes = list(self.pool.map(lambda p: _load_mesh_from_h5(group, p), parts))
         pcs, pns, thr = self._sample_points(meshes)
         return {
