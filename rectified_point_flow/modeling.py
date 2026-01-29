@@ -22,7 +22,7 @@ from .utils.logging import MetricsMeter, log_metrics_on_step, log_metrics_on_epo
 
 class RectifiedPointFlow(L.LightningModule):
     """Rectified Flow model for point cloud assembly."""
-    
+
     def __init__(
         self,
         feature_extractor: L.LightningModule,
@@ -119,7 +119,9 @@ class RectifiedPointFlow(L.LightningModule):
             u = torch.asinh(u * math.sinh(a)) / a
             u = (u + 1) / 2
         elif self.timestep_sampling == "logit_normal":
-            u = torch.normal(mean=logit_mean, std=logit_std, size=(batch_size,), device=device)
+            u = torch.normal(
+                mean=logit_mean, std=logit_std, size=(batch_size,), device=device
+            )
             u = torch.sigmoid(u)
         elif self.timestep_sampling == "mode":
             u = torch.rand(size=(batch_size,), device=device)
@@ -127,22 +129,28 @@ class RectifiedPointFlow(L.LightningModule):
         elif self.timestep_sampling == "uniform":
             u = torch.rand(size=(batch_size,), device=device)
         else:
-            raise ValueError(f"Invalid timestep sampling mode: {self.timestep_sampling}")
-        
+            raise ValueError(
+                f"Invalid timestep sampling mode: {self.timestep_sampling}"
+            )
+
         # Clamp small t to reduce loss spikes
         u = u.clamp(eps, 1.0)
         return u
-    
+
     def _encode(self, data_dict: dict):
         """Extract features from input data using FP16."""
         with torch.inference_mode(self.frozen_encoder):
-            with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=True):
+            with torch.autocast(
+                device_type=self.device.type, dtype=torch.float16, enabled=True
+            ):
                 out_dict = self.feature_extractor(data_dict)
         points = out_dict["point"]
         points["batch"] = points["batch_level1"].clone()
         return points
 
-    def _compute_flow_target(self, x_0: torch.Tensor, x_1: torch.Tensor, t: torch.Tensor) -> tuple:
+    def _compute_flow_target(
+        self, x_0: torch.Tensor, x_1: torch.Tensor, t: torch.Tensor
+    ) -> tuple:
         """Compute the learning target of rectified flow.
 
         Args:
@@ -154,13 +162,15 @@ class RectifiedPointFlow(L.LightningModule):
             x_t: Linear interpolation point cloud
             v_t: Velocity field
         """
-        t = t.view(-1, 1, 1)              # (B, 1, 1)
-        x_t = (1 - t) * x_0 + t * x_1     # interpolated point cloud
-        v_t = x_1 - x_0                   # velocity field
+        t = t.view(-1, 1, 1)  # (B, 1, 1)
+        x_t = (1 - t) * x_0 + t * x_1  # interpolated point cloud
+        v_t = x_1 - x_0  # velocity field
         return x_t, v_t
 
     @staticmethod
-    def _rt_to_matrix(rotation: torch.Tensor, translation: torch.Tensor) -> torch.Tensor:
+    def _rt_to_matrix(
+        rotation: torch.Tensor, translation: torch.Tensor
+    ) -> torch.Tensor:
         """Convert rotation + translation to a 4x4 homogeneous transform."""
         T = torch.eye(4, device=rotation.device, dtype=rotation.dtype)
         T[:3, :3] = rotation
@@ -169,26 +179,26 @@ class RectifiedPointFlow(L.LightningModule):
 
     def forward(self, data_dict: dict):
         """Forward pass for training using rectified flow."""
-        x_0 = data_dict["pointclouds_gt"]                           # (B, N, 3)
-        scales = data_dict["scales"]                                # (B, )
-        anchor_indices = data_dict["anchor_indices"]                # (B, N)
+        x_0 = data_dict["pointclouds_gt"]  # (B, N, 3)
+        scales = data_dict["scales"]  # (B, )
+        anchor_indices = data_dict["anchor_indices"]  # (B, N)
         B, N, _ = x_0.shape
 
         # Encode point clouds
         latent = self._encode(data_dict)
-        
+
         # Sample timesteps
-        timesteps = self._sample_timesteps(batch_size=B)            # (B, )
-        
+        timesteps = self._sample_timesteps(batch_size=B)  # (B, )
+
         # Sample noise and compute flow target
-        x_1 = torch.randn_like(x_0)                                 # (B, N, 3)
-        x_t, v_t = self._compute_flow_target(x_0, x_1, timesteps)   # (B, N, 3) each
-        
+        x_1 = torch.randn_like(x_0)  # (B, N, 3)
+        x_t, v_t = self._compute_flow_target(x_0, x_1, timesteps)  # (B, N, 3) each
+
         # Apply anchor part constraints (only used in anchor-fixed mode)
         if not self.anchor_free:
             x_t[anchor_indices] = x_0[anchor_indices]
             v_t[anchor_indices] = 0.0
-        
+
         # Predict velocity field
         v_pred = self.flow_model(
             x=x_t,
@@ -261,22 +271,25 @@ class RectifiedPointFlow(L.LightningModule):
         points_per_part = data_dict["points_per_part"]
 
         for gen_idx in range(self.n_generations):
-            trajs = self.sample_rectified_flow(data_dict, latent, return_tarjectory=True)
-            pointclouds_pred = trajs[-1]      
+            trajs = self.sample_rectified_flow(
+                data_dict, latent, return_tarjectory=True
+            )
+            pointclouds_pred = trajs[-1]
             rotations_pred, translations_pred = fit_transformations(
                 pointclouds_cond, pointclouds_pred, points_per_part
             )
             eval_results = self.evaluator.run(
-                data_dict, 
-                pointclouds_pred, 
-                rotations_pred, 
-                translations_pred, 
-                save_results=self.save_results, 
+                data_dict,
+                pointclouds_pred,
+                rotations_pred,
+                translations_pred,
+                save_results=self.save_results,
                 generation_idx=gen_idx,
             )
             if self.save_results:
                 self._save_assemblies(
                     data_dict=data_dict,
+                    pointclouds_pred=pointclouds_pred,
                     rotations_pred=rotations_pred,
                     translations_pred=translations_pred,
                     eval_results=eval_results,
@@ -286,12 +299,12 @@ class RectifiedPointFlow(L.LightningModule):
             n_rotations_pred.append(rotations_pred)
             n_translations_pred.append(translations_pred)
             n_eval_results.append(eval_results)
-        
+
         # Compute average metrics
         avg_results = {}
         for key in n_eval_results[0].keys():
             avg = sum(result[key] for result in n_eval_results) / len(n_eval_results)
-            avg_results[f'avg/{key}'] = avg
+            avg_results[f"avg/{key}"] = avg
         self.log_dict(avg_results, prog_bar=False)
 
         # Compute best of N (BoN) metrics
@@ -299,32 +312,32 @@ class RectifiedPointFlow(L.LightningModule):
             best_results = {}
             for key in n_eval_results[0].keys():
                 values = [result[key] for result in n_eval_results]
-                agg_fn = max if ('acc' in key or 'recall' in key) else min
-                best_results[f'best_of_n/{key}'] = agg_fn(values)
+                agg_fn = max if ("acc" in key or "recall" in key) else min
+                best_results[f"best_of_n/{key}"] = agg_fn(values)
             self.log_dict(best_results, prog_bar=False)
-        
+
         return {
-            'trajectories': n_trajectories,
-            'rotations_pred': n_rotations_pred,
-            'translations_pred': n_translations_pred,
+            "trajectories": n_trajectories,
+            "rotations_pred": n_rotations_pred,
+            "translations_pred": n_translations_pred,
         }
-    
+
     @torch.inference_mode()
     def sample_rectified_flow(
-        self, 
+        self,
         data_dict: dict,
-        latent: dict, 
+        latent: dict,
         x_1: torch.Tensor | None = None,
         return_tarjectory: bool = False,
     ) -> torch.Tensor | list[torch.Tensor]:
         """Sample from rectified flow using configurable integration methods.
-        
+
         Args:
             data_dict: Input data dictionary
             latent: Feature latent dictionary
             x_1: Optional initial noise. If None, generates random Gaussian noise.
             return_tarjectory: Whether to return the trajectory
-            
+
         Returns:
             (num_points, 3) if return_tarjectory == False
             (num_steps, num_points, 3) if return_tarjectory == True
@@ -345,12 +358,14 @@ class RectifiedPointFlow(L.LightningModule):
 
         x_0 = data_dict["pointclouds_gt"]
         x_1 = torch.randn_like(x_0) if x_1 is None else x_1
-        
+
         result = get_sampler(self.inference_sampler)(
             flow_model_fn=_flow_model_fn,
             x_1=x_1,
             x_0=x_0,
-            anchor_indices=anchor_indices if not self.anchor_free else None, # None => skip anchor constraints
+            anchor_indices=anchor_indices
+            if not self.anchor_free
+            else None,  # None => skip anchor constraints
             num_steps=self.inference_sampling_steps,
             return_trajectory=return_tarjectory,
         )
@@ -359,16 +374,24 @@ class RectifiedPointFlow(L.LightningModule):
     def _save_assemblies(
         self,
         data_dict: dict,
+        pointclouds_pred: torch.Tensor,
         rotations_pred: torch.Tensor,
         translations_pred: torch.Tensor,
         eval_results: dict,
         generation_idx: int,
     ) -> None:
         """Save assembled meshes and metrics for a test batch."""
-        if "meshes" not in data_dict or any(len(meshes) == 0 for meshes in data_dict["meshes"]) or self.trainer is None:
+        if (
+            "meshes" not in data_dict
+            or any(len(meshes) == 0 for meshes in data_dict["meshes"])
+            or self.trainer is None
+        ):
             return
-        
-        save_root = Path(self.trainer.log_dir or self.trainer.default_root_dir or ".") / "visualizations"
+
+        save_root = (
+            Path(self.trainer.log_dir or self.trainer.default_root_dir or ".")
+            / "visualizations"
+        )
         save_root.mkdir(parents=True, exist_ok=True)
 
         # # For debugging: just revert back to initial transformations
@@ -393,31 +416,30 @@ class RectifiedPointFlow(L.LightningModule):
                 if points_per_part[b, p].item() == 0:
                     continue
 
+                # To normalized space
                 part_mesh = data_dict["meshes"][b][p]
-                # Bring mesh into the same normalized frame as the processed point clouds:
-                # 1) subtract global centroid; 2) apply initial global rotation; 3) uniform scale to [-1, 1].
                 mesh_norm = part_mesh.copy()
                 mesh_norm.apply_translation(-global_offset)
                 mesh_norm.apply_scale(1.0 / scale)
 
-                # Map from normalized assembled frame -> per-part input frame.
-                rot_in = data_dict["rotations"][b, p].detach().cpu().numpy()      # inverse of the random part rotation
-                trans_in = data_dict["translations"][b, p].detach().cpu().numpy()  # part centroid in normalized frame
                 rot_pred = rotations_pred[b, p].detach().cpu().numpy()
                 trans_pred = translations_pred[b, p].detach().cpu().numpy()
 
-                # pointclouds       = (pointclouds_gt - trans_in) @ rot_in
-                # pointclouds_pred  = pointclouds @ rot_pred.T + trans_pred
-                # => pointclouds_pred = pointclouds_gt @ (rot_in @ rot_pred.T) + (-trans_in @ rot_in @ rot_pred.T + trans_pred)
-                rot_comb = rot_in @ rot_pred.T
-                trans_comb = (-trans_in @ rot_in) @ rot_pred.T + trans_pred
+                # Transform mesh to input position
+                mesh_input = mesh_norm.copy()
+                rot_in = data_dict["rotations"][b, p].detach().cpu().numpy()
+                trans_in = data_dict["translations"][b, p].detach().cpu().numpy()
+                T = np.eye(4, dtype=np.float32)
+                T[:3, :3] = rot_in.T
+                T[:3, 3] = -rot_in.T @ trans_in
+                mesh_input.apply_transform(T)
 
-                T_comb = np.eye(4, dtype=np.float32)
-                T_comb[:3, :3] = rot_comb
-                T_comb[:3, 3] = trans_comb
+                T_pred = np.eye(4, dtype=np.float32)
+                T_pred[:3, :3] = rot_pred
+                T_pred[:3, 3] = trans_pred
 
-                mesh_pred = mesh_norm.copy()
-                mesh_pred.apply_transform(T_comb)
+                mesh_pred = mesh_input.copy()
+                mesh_pred.apply_transform(T_pred)
 
                 scene_pred.add_geometry(mesh_pred)
                 scene_gt.add_geometry(mesh_norm)
@@ -427,33 +449,44 @@ class RectifiedPointFlow(L.LightningModule):
                 scene_gt.export(obj_dir / "view_gt.glb")
 
             stats = {
-                "part_acc": float(eval_results["part_accuracy"][b].detach().cpu().item()),
-                "rmse_t": float(eval_results["translation_error"][b].detach().cpu().item()),
-                "rmse_r": float(eval_results["rotation_error"][b].detach().cpu().item()),
+                "part_acc": float(
+                    eval_results["part_accuracy"][b].detach().cpu().item()
+                ),
+                "rmse_t": float(
+                    eval_results["translation_error"][b].detach().cpu().item()
+                ),
+                "rmse_r": float(
+                    eval_results["rotation_error"][b].detach().cpu().item()
+                ),
+                "shape_chamfer": float(
+                    eval_results["object_chamfer"][b].detach().cpu().item()
+                ),
             }
-            (obj_dir / f"view_assembly_0{generation_idx:02d}.json").write_text(json.dumps(stats, indent=2))
+            (obj_dir / f"view_assembly_0{generation_idx:02d}.json").write_text(
+                json.dumps(stats, indent=2)
+            )
 
     def on_validation_epoch_end(self):
         metrics = self.meter.compute_average()
         log_metrics_on_epoch(self, metrics, prefix="val")
         return metrics
-    
+
     def on_test_epoch_end(self):
         metrics = self.meter.compute_average()
         log_metrics_on_epoch(self, metrics, prefix="test")
         return metrics
-        
+
     def on_save_checkpoint(self, checkpoint):
         checkpoint["rng_state"] = get_rng_state()
         return super().on_save_checkpoint(checkpoint)
-    
+
     def on_load_checkpoint(self, checkpoint):
         if "rng_state" in checkpoint:
             set_rng_state(checkpoint["rng_state"])
         else:
             print("No RNG state found in checkpoint.")
         super().on_load_checkpoint(checkpoint)
-    
+
     def configure_optimizers(self):
         optimizer = self.optimizer(self.parameters())
 
@@ -465,7 +498,7 @@ class RectifiedPointFlow(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": lr_scheduler,
         }
-    
+
 
 if __name__ == "__main__":
     # Test the model
